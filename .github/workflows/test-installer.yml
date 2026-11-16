@@ -1,0 +1,198 @@
+name: test-installer
+
+on:
+  push:
+    branches: [test/windows-installer]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: lichii-windows-x86_64-05fc9e2b112419e2694d38f072d26379e13f4548
+          path: bin
+          run-id: 43852283009
+          repository: Pingpetrus002/Lichii
+          github-token: ${{ github.token }}
+
+      - name: Build the installer with this branch's script
+        shell: pwsh
+        run: |
+          $makensis = Join-Path ${env:ProgramFiles(x86)} 'NSIS\makensis.exe'
+          $bin = (Resolve-Path bin).Path
+          $manifest = Join-Path $PWD 'install-manifest.txt'
+          $files = Get-ChildItem -Recurse -File $bin |
+            ForEach-Object { [IO.Path]::GetRelativePath($bin, $_.FullName).Replace('\', '/') } |
+            Sort-Object
+          [IO.File]::WriteAllText($manifest, (($files | ForEach-Object { "$_`n" }) -join ''))
+          New-Item -ItemType Directory installer | Out-Null
+          & $makensis /V2 /WX /DPRODUCT_VERSION=test /DARCH=x86_64 /DVARIANT=standard "/DBINARY_SOURCE_DIR=$bin" `
+            "/DMANIFEST_FILE=$manifest" "/DOUTPUT_FILE=$PWD\installer\lichii-test-installer.exe" dist/installer.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed with exit code $LASTEXITCODE" }
+
+      - name: Test the installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script:failed = 0
+          function Check([bool]$ok, [string]$what) {
+            if ($ok) { Write-Host "PASS  $what" } else { Write-Host "FAIL  $what"; $script:failed++ }
+          }
+          function Run([string]$exe, [string[]]$arguments) {
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru
+            return $p.ExitCode
+          }
+          function RegValue([string]$key, [string]$name) {
+            (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue).$name
+          }
+
+          $installer = (Get-ChildItem installer -Filter *.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:LOCALAPPDATA 'Lichii'
+          $data = Join-Path $env:APPDATA 'lichii'
+          $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lichii'
+          $startLink = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Lichii.lnk'
+          $desktopLink = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Lichii.lnk'
+
+          Write-Host "== Installer manifest"
+          $bytes = [IO.File]::ReadAllText($installer, [Text.Encoding]::ASCII)
+          Check ($bytes -match 'level="asInvoker"') 'runs as the user (asInvoker), no UAC prompt'
+
+          Write-Host "== Fresh silent install"
+          Check ((Run $installer @('/S')) -eq 0) 'installer exit code 0'
+          Check (Test-Path "$dir\lichii.exe") 'lichii.exe installed'
+          Check (Test-Path "$dir\eden-cli.exe") 'eden-cli.exe installed'
+          Check (Test-Path "$dir\uninst.exe") 'uninst.exe installed'
+          Check (Test-Path "$dir\install-manifest.txt") 'install-manifest.txt installed'
+          $listed = Get-Content "$dir\install-manifest.txt"
+          $actual = Get-ChildItem -Recurse -File $dir | ForEach-Object {
+            [IO.Path]::GetRelativePath($dir, $_.FullName).Replace('\', '/') } |
+            Where-Object { $_ -notin @('install-manifest.txt', 'uninst.exe') }
+          Write-Host "      manifest lists $($listed.Count) files, install holds $($actual.Count)"
+          Check ($null -eq (Compare-Object $listed $actual)) 'manifest lists exactly the installed files'
+          Check ((RegValue $uninstKey 'InstallLocation') -eq $dir) 'uninstall entry InstallLocation'
+          Check ((RegValue $uninstKey 'NoModify') -eq 1) 'uninstall entry NoModify'
+          Check ((RegValue $uninstKey 'DisplayName') -eq 'Lichii') 'uninstall entry DisplayName'
+          Check ((RegValue 'HKCU:\Software\Classes\.xci' '(default)') -eq 'Lichii') '.xci opens with Lichii'
+          $cmd = RegValue 'HKCU:\Software\Classes\Lichii\Shell\open\command' '(default)'
+          Write-Host "      open command: $cmd"
+          Check ($cmd -eq "`"$dir\lichii.exe`" `"%1`"") 'open command quotes the path'
+          Check (Test-Path $startLink) 'Start menu shortcut'
+          Check (Test-Path $desktopLink) 'desktop shortcut (default on)'
+
+          Write-Host "== Reinstall keeps user data and earlier choices"
+          New-Item -ItemType Directory -Force "$data\config", "$dir\user" | Out-Null
+          Set-Content "$data\config\qt-config.ini" 'keep'
+          Set-Content "$dir\user\portable.txt" 'keep'
+          Remove-Item $desktopLink
+          Set-ItemProperty 'HKCU:\Software\Classes\.xci' '(default)' 'OtherEmulator'
+          Check ((Run $installer @('/S')) -eq 0) 'reinstall exit code 0'
+          Check (Test-Path "$dir\lichii.exe") 'lichii.exe still installed'
+          Check (Test-Path "$data\config\qt-config.ini") '%APPDATA%\lichii kept'
+          Check (Test-Path "$dir\user\portable.txt") 'portable user folder kept'
+          Check (-not (Test-Path $desktopLink)) 'declined desktop shortcut stays off'
+          Check ((RegValue 'HKCU:\Software\Classes\.xci' '(default)') -eq 'OtherEmulator') 'declined file types stay off'
+
+          Write-Host "== Lichii running"
+          Set-ItemProperty 'HKCU:\Software\Classes\.xci' '(default)' 'Lichii'
+          $proc = Start-Process "$dir\lichii.exe" -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            Write-Host "SKIP  lichii.exe exited with $($proc.ExitCode) on this runner; holding the exe open instead"
+            $lock = [IO.File]::Open("$dir\lichii.exe", 'Open', 'Read', 'Read')
+          }
+          $before = (Get-Item "$dir\lichii.exe").LastWriteTimeUtc
+          $code = Run $installer @('/S')
+          Check ($code -ne 0) "install refused while running (exit $code)"
+          Check ((Get-Item "$dir\lichii.exe").LastWriteTimeUtc -eq $before) 'installed files untouched'
+          $code = Run "$dir\uninst.exe" @('/S', "_?=$dir")
+          Check ($code -ne 0) "uninstall refused while running (exit $code)"
+          Check (Test-Path "$dir\lichii.exe") 'nothing uninstalled'
+          if ($lock) { $lock.Close() } else { Stop-Process -Id $proc.Id -Force; Start-Sleep -Seconds 3 }
+
+          Write-Host "== Silent uninstall"
+          New-Item -Force 'HKCU:\Software\Classes\.nro' | Out-Null
+          Set-ItemProperty 'HKCU:\Software\Classes\.nro' '(default)' 'OtherEmulator'
+          Check ((Run "$dir\uninst.exe" @('/S', "_?=$dir")) -eq 0) 'uninstaller exit code 0'
+          $left = Get-ChildItem -Recurse -Force $dir | ForEach-Object { [IO.Path]::GetRelativePath($dir, $_.FullName) }
+          Write-Host "      left in the install dir: $($left -join ', ')"
+          Check ($null -eq ($left | Where-Object { $_ -notmatch '^(uninst\.exe|user(\\.*)?)$' })) 'only uninst.exe (still running) and user\ remain'
+          Check (Test-Path "$data\config\qt-config.ini") '%APPDATA%\lichii kept (silent answers No)'
+          Check (-not (Test-Path $uninstKey)) 'uninstall entry removed'
+          Check (-not (Test-Path 'HKCU:\Software\Classes\Lichii')) 'Lichii file type removed'
+          Check (-not (Test-Path 'HKCU:\Software\Classes\.xci')) '.xci association removed'
+          Check ((RegValue 'HKCU:\Software\Classes\.nro' '(default)') -eq 'OtherEmulator') ".nro owned by another program kept"
+          Check (-not (Test-Path $startLink)) 'Start menu shortcut removed'
+
+          Write-Host ""
+          if ($script:failed) { throw "$($script:failed) check(s) failed" }
+          Write-Host 'All checks passed'
+
+      - name: Screenshots in French, Japanese and Arabic
+        if: always()
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $shell = New-Object -ComObject WScript.Shell
+          $installer = (Get-ChildItem installer -Filter *.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:LOCALAPPDATA 'Lichii'
+          $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Lichii'
+          New-Item -ItemType Directory -Force shots | Out-Null
+          function Shot([string]$name) {
+            Start-Sleep -Seconds 3
+            $b = [Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object Drawing.Bitmap $b.Width, $b.Height
+            [Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [Drawing.Point]::Empty, $b.Size)
+            $bmp.Save("shots\$name.png")
+            Write-Host "shot $name"
+          }
+          function Keys([int]$procId, [string]$keys) {
+            $null = $shell.AppActivate($procId); Start-Sleep -Milliseconds 500; $shell.SendKeys($keys)
+          }
+          foreach ($lang in @(@{n='fr'; id=1036}, @{n='ja'; id=1041}, @{n='ar'; id=1025})) {
+            Write-Host "== $($lang.n)"
+            # A silent install that keeps the language, as a reinstall would.
+            New-Item -Force $key | Out-Null
+            Set-ItemProperty $key 'Installer Language' "$($lang.id)"
+            Start-Process $installer '/S' -Wait
+            $kept = (Get-ItemProperty $key).'Installer Language'
+            Write-Host "   language kept by the silent install: $kept"
+            if ($kept -ne "$($lang.id)") { throw "the silent install did not keep the language" }
+            Set-ItemProperty $key 'Installer Language' "$($lang.id)"
+            $app = Start-Process "$dir\lichii.exe" -PassThru
+            Start-Sleep -Seconds 8
+
+            $setup = Start-Process $installer -PassThru
+            Shot "$($lang.n)-1-language"
+            Keys $setup.Id '{ENTER}'; Shot "$($lang.n)-2-license"
+            Keys $setup.Id '{ENTER}'; Shot "$($lang.n)-3-options"
+            Keys $setup.Id '{ENTER}'; Shot "$($lang.n)-4-directory"
+            Keys $setup.Id '{ENTER}'; Shot "$($lang.n)-5-running"
+            Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+
+            New-Item -ItemType Directory -Force "$env:APPDATA\lichii\config" | Out-Null
+            Set-Content "$env:APPDATA\lichii\config\qt-config.ini" 'keep'
+            Start-Process "$dir\uninst.exe"
+            Start-Sleep -Seconds 4
+            Shot "$($lang.n)-6-user-data"
+            $un = Get-Process | Where-Object { $_.ProcessName -like 'Au_*' } | Select-Object -First 1
+            if ($un) { Keys $un.Id '{ENTER}'; Start-Sleep -Seconds 5 }
+            Get-Process | Where-Object { $_.ProcessName -like 'Au_*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+            Write-Host "   data kept after the default answer: $(Test-Path "$env:APPDATA\lichii\config\qt-config.ini")"
+          }
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: installer-screenshots
+          path: shots/
+          retention-days: 3
