@@ -6197,9 +6197,11 @@ bool MainWindow::DropAction(QDropEvent* event) {
         return false;
     }
 
-    const QMimeData* mime_data = event->mimeData();
-    const QString& filename = mime_data->urls().at(0).toLocalFile();
+    OpenFile(event->mimeData()->urls().at(0).toLocalFile());
+    return true;
+}
 
+void MainWindow::OpenFile(const QString& filename) {
     if (emulation_running && QFileInfo(filename).suffix() == QStringLiteral("bin")) {
         // Amiibo
         LoadAmiibo(filename);
@@ -6209,7 +6211,6 @@ bool MainWindow::DropAction(QDropEvent* event) {
             BootGame(filename, ApplicationAppletParameters());
         }
     }
-    return true;
 }
 
 void MainWindow::dropEvent(QDropEvent* event) {

@@ -187,6 +187,8 @@ public:
 
     bool DropAction(QDropEvent* event);
     void AcceptDropEvent(QDropEvent* event);
+    /// Boots a game, or loads an amiibo while one runs, from a dropped or opened file.
+    void OpenFile(const QString& filename);
 
     std::filesystem::path GetShortcutPath(QtCommon::Game::ShortcutTarget target);
 
