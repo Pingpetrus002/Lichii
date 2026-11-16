@@ -38,13 +38,13 @@
 #ifdef __APPLE__
 namespace {
 // Finder hands the files it opens with Lichii (double-click, Open With, a drop on the Dock icon)
-// over as QFileOpenEvent, not as arguments. One that comes before the main window waits for it.
+// over as QFileOpenEvent, not as arguments. Those that come before the main window wait for it.
 class FileOpenFilter : public QObject {
 public:
     void SetWindow(MainWindow* main_window) {
         window = main_window;
-        if (!pending.isEmpty()) {
-            Open(std::exchange(pending, {}));
+        for (const QString& file : std::exchange(pending, {})) {
+            window->QueueOpenFile(file);
         }
     }
 
@@ -58,22 +58,16 @@ protected:
             return QObject::eventFilter(object, event);
         }
         if (window) {
-            Open(file);
+            window->QueueOpenFile(file);
         } else {
-            pending = file;
+            pending.push_back(file);
         }
         return true;
     }
 
 private:
-    // Queued so the stop-emulation question doesn't run inside the event filter.
-    void Open(const QString& file) {
-        QMetaObject::invokeMethod(
-            window, [target = window, file] { target->OpenFile(file); }, Qt::QueuedConnection);
-    }
-
     MainWindow* window{};
-    QString pending;
+    QStringList pending;
 };
 } // namespace
 #endif

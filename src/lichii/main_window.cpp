@@ -2245,6 +2245,8 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         }
         if (close_pending) {
             QTimer::singleShot(0, this, &QWidget::close);
+        } else if (!queued_open_files.isEmpty()) {
+            QTimer::singleShot(0, this, &MainWindow::OpenQueuedFiles);
         }
     };
     if (emulation_running) {
@@ -6199,6 +6201,25 @@ bool MainWindow::DropAction(QDropEvent* event) {
 
     OpenFile(event->mimeData()->urls().at(0).toLocalFile());
     return true;
+}
+
+void MainWindow::QueueOpenFile(const QString& filename) {
+    queued_open_files.push_back(filename);
+    QTimer::singleShot(0, this, &MainWindow::OpenQueuedFiles);
+}
+
+void MainWindow::OpenQueuedFiles() {
+    // The dialogs of an open or a boot in progress run nested event loops. Wait for them to
+    // return instead of starting another open inside one: BootGame ignores a second boot.
+    if (opening_queued_file || boot_in_progress || queued_open_files.isEmpty()) {
+        return;
+    }
+    opening_queued_file = true;
+    OpenFile(queued_open_files.takeFirst());
+    opening_queued_file = false;
+    if (!queued_open_files.isEmpty()) {
+        QTimer::singleShot(0, this, &MainWindow::OpenQueuedFiles);
+    }
 }
 
 void MainWindow::OpenFile(const QString& filename) {
