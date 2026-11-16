@@ -61,6 +61,12 @@ ShowUnInstDetails show
 ; MUI Settings
 !define MUI_ICON "lichii.ico"
 !define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+; The language picked at install is kept for the uninstaller and offered first on a reinstall.
+!define MUI_LANGDLL_REGISTRY_ROOT HKCU
+!define MUI_LANGDLL_REGISTRY_KEY "${PRODUCT_UNINST_KEY}"
+!define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
+!define MUI_LANGDLL_ALWAYSSHOW
+!define MUI_LANGDLL_ALLLANGUAGES
 
 ; License page
 !insertmacro MUI_PAGE_LICENSE "..\LICENSE.txt"
@@ -85,28 +91,36 @@ Var DesktopShortcut
 Var FileAssocCheckbox
 Var FileAssoc
 
-; Language files
+; Language files: English and the languages Lichii ships (dist/languages).
 !insertmacro MUI_LANGUAGE "English"
-!insertmacro MUI_LANGUAGE "SimpChinese"
-!insertmacro MUI_LANGUAGE "TradChinese"
+!insertmacro MUI_LANGUAGE "Arabic"
+!insertmacro MUI_LANGUAGE "Catalan"
+!insertmacro MUI_LANGUAGE "Czech"
 !insertmacro MUI_LANGUAGE "Danish"
 !insertmacro MUI_LANGUAGE "Dutch"
+!insertmacro MUI_LANGUAGE "Finnish"
 !insertmacro MUI_LANGUAGE "French"
 !insertmacro MUI_LANGUAGE "German"
+!insertmacro MUI_LANGUAGE "Greek"
 !insertmacro MUI_LANGUAGE "Hungarian"
+!insertmacro MUI_LANGUAGE "Indonesian"
 !insertmacro MUI_LANGUAGE "Italian"
 !insertmacro MUI_LANGUAGE "Japanese"
 !insertmacro MUI_LANGUAGE "Korean"
-!insertmacro MUI_LANGUAGE "Lithuanian"
 !insertmacro MUI_LANGUAGE "Norwegian"
 !insertmacro MUI_LANGUAGE "Polish"
+!insertmacro MUI_LANGUAGE "Portuguese"
 !insertmacro MUI_LANGUAGE "PortugueseBR"
-!insertmacro MUI_LANGUAGE "Romanian"
 !insertmacro MUI_LANGUAGE "Russian"
+!insertmacro MUI_LANGUAGE "SimpChinese"
 !insertmacro MUI_LANGUAGE "Spanish"
 !insertmacro MUI_LANGUAGE "Swedish"
+!insertmacro MUI_LANGUAGE "TradChinese"
 !insertmacro MUI_LANGUAGE "Turkish"
+!insertmacro MUI_LANGUAGE "Ukrainian"
 !insertmacro MUI_LANGUAGE "Vietnamese"
+
+!include /CHARSET=UTF8 "installer-strings.nsh"
 
 ; MUI end ------
 
@@ -133,7 +147,7 @@ Function ${UN}CheckNotRunning
     ${If} $R1 == ""
       Return
     ${EndIf}
-    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "Lichii is running from $INSTDIR. Close it, then click Retry." /SD IDCANCEL IDRETRY +2
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(Running)" /SD IDCANCEL IDRETRY +2
     Abort
   ${Loop}
 FunctionEnd
@@ -160,18 +174,18 @@ Function .onInit
 FunctionEnd
 
 Function optionsPageCreate
-  !insertmacro MUI_HEADER_TEXT "Options" "Choose the shortcuts and file types Lichii sets up."
+  !insertmacro MUI_HEADER_TEXT "$(OptionsTitle)" "$(OptionsSubtitle)"
   nsDialogs::Create 1018
   Pop $OptionsPageDialog
   ${If} $OptionsPageDialog == error
     Abort
   ${EndIf}
 
-  ${NSD_CreateCheckbox} 0u 0u 100% 12u "Create a desktop shortcut"
+  ${NSD_CreateCheckbox} 0u 0u 100% 12u "$(DesktopShortcut)"
   Pop $DesktopShortcutCheckbox
   ${NSD_SetState} $DesktopShortcutCheckbox $DesktopShortcut
 
-  ${NSD_CreateCheckbox} 0u 16u 100% 12u "Open .nsp, .xci, .nro and .kip files with Lichii"
+  ${NSD_CreateCheckbox} 0u 16u 100% 12u "$(FileTypes)"
   Pop $FileAssocCheckbox
   ${NSD_SetState} $FileAssocCheckbox $FileAssoc
 
@@ -243,6 +257,9 @@ Section -Post
   WriteRegStr HKCU "${PRODUCT_UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "NoRepair" 1
+  ; MUI saves it when leaving the install page, which a silent install skips. Its macro does nothing
+  ; after the uninstaller pages, so the value is written here.
+  WriteRegStr ${MUI_LANGDLL_REGISTRY_ROOT} "${MUI_LANGDLL_REGISTRY_KEY}" "${MUI_LANGDLL_REGISTRY_VALUENAME}" $LANGUAGE
   ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
   IntFmt $0 "0x%08X" $0
   WriteRegDWORD HKCU "${PRODUCT_UNINST_KEY}" "EstimatedSize" "$0"
@@ -307,18 +324,19 @@ Function un.RemoveUserData
     StrCpy $R2 "$R2$\r$\n$INSTDIR\user"
   ${EndIf}
   ${If} ${FileExists} "$APPDATA\lichii\*.*"
-    StrCpy $R2 "$R2$\r$\n$APPDATA\lichii (also used by other Lichii copies, such as the zip)"
+    StrCpy $R2 "$R2$\r$\n$APPDATA\lichii $(SharedData)"
   ${EndIf}
   ${If} $R2 == ""
     Return
   ${EndIf}
-  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also delete your Lichii settings, keys, saves, mods and shader caches?$\r$\n$R2$\r$\n$\r$\nChoose No to keep them for a later install." /SD IDNO IDYES +2
+  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "$(DeleteData)$\r$\n$R2$\r$\n$\r$\n$(KeepData)" /SD IDNO IDYES +2
   Return
   RMDir /r "$INSTDIR\user"
   RMDir /r "$APPDATA\lichii"
 FunctionEnd
 
 Function un.onInit
+  !insertmacro MUI_UNGETLANGUAGE
   Call un.CheckNotRunning
 FunctionEnd
 
