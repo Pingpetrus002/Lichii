@@ -1,6 +1,7 @@
 name: test-installer
 
 on:
+  workflow_dispatch:
   push:
     branches: [test/installer-screenshots-en]
 
