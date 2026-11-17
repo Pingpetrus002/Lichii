@@ -556,9 +556,9 @@ private:
 class InputFromMotion final : public Common::Input::InputDevice {
 public:
     explicit InputFromMotion(PadIdentifier identifier_, int motion_sensor_, float gyro_threshold_,
-                             InputEngine* input_engine_)
+                             float gyro_sensitivity_, InputEngine* input_engine_)
         : identifier(identifier_), motion_sensor(motion_sensor_), gyro_threshold(gyro_threshold_),
-          input_engine(input_engine_) {
+          gyro_sensitivity(gyro_sensitivity_), input_engine(input_engine_) {
         UpdateCallback engine_callback{[this]() { OnChange(); }};
         const InputIdentifier input_identifier{
             .identifier = identifier,
@@ -585,9 +585,12 @@ public:
         status.accel.x = {.raw_value = basic_motion.accel_x, .properties = properties};
         status.accel.y = {.raw_value = basic_motion.accel_y, .properties = properties};
         status.accel.z = {.raw_value = basic_motion.accel_z, .properties = properties};
-        status.gyro.x = {.raw_value = basic_motion.gyro_x, .properties = properties};
-        status.gyro.y = {.raw_value = basic_motion.gyro_y, .properties = properties};
-        status.gyro.z = {.raw_value = basic_motion.gyro_z, .properties = properties};
+        status.gyro.x = {.raw_value = basic_motion.gyro_x * gyro_sensitivity,
+                         .properties = properties};
+        status.gyro.y = {.raw_value = basic_motion.gyro_y * gyro_sensitivity,
+                         .properties = properties};
+        status.gyro.z = {.raw_value = basic_motion.gyro_z * gyro_sensitivity,
+                         .properties = properties};
         status.delta_timestamp = basic_motion.delta_timestamp;
         return status;
     }
@@ -605,6 +608,7 @@ private:
     const PadIdentifier identifier;
     const int motion_sensor;
     const float gyro_threshold;
+    const float gyro_sensitivity;
     int callback_key;
     InputEngine* input_engine;
 };
@@ -1072,10 +1076,11 @@ std::unique_ptr<Common::Input::InputDevice> InputFactory::CreateMotionDevice(
     if (params.Has("motion")) {
         const auto motion_sensor = params.Get("motion", 0);
         const auto gyro_threshold = params.Get("threshold", 0.007f);
+        const auto gyro_sensitivity = std::clamp(params.Get("gyro_sensitivity", 1.0f), 0.1f, 5.0f);
         input_engine->PreSetController(identifier);
         input_engine->PreSetMotion(identifier, motion_sensor);
         return std::make_unique<InputFromMotion>(identifier, motion_sensor, gyro_threshold,
-                                                 input_engine.get());
+                                                 gyro_sensitivity, input_engine.get());
     }
 
     const auto deadzone = std::clamp(params.Get("deadzone", 0.15f), 0.0f, 1.0f);

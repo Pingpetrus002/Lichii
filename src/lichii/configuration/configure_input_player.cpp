@@ -483,6 +483,24 @@ ConfigureInputPlayer::ConfigureInputPlayer(QWidget* parent, std::size_t player_i
                             param.Set("threshold", new_threshold / 1000.0f);
                             emulated_controller->SetMotionParam(motion_id, param);
                         });
+                        context_menu.addAction(tr("Set gyro sensitivity"), [&] {
+                            const int gyro_sensitivity =
+                                qRound(param.Get("gyro_sensitivity", 1.0f) * 100.0f);
+                            bool ok = false;
+                            const int new_sensitivity = QInputDialog::getInt(
+                                this, tr("Set gyro sensitivity"),
+                                tr("Choose a value between 10% and 500%"), gyro_sensitivity, 10,
+                                500, 10, &ok);
+                            if (!ok) {
+                                return;
+                            }
+                            if (new_sensitivity == 100) {
+                                param.Erase("gyro_sensitivity");
+                            } else {
+                                param.Set("gyro_sensitivity", new_sensitivity / 100.0f);
+                            }
+                            emulated_controller->SetMotionParam(motion_id, param);
+                        });
                         context_menu.addAction(tr("Calibrate sensor"), [&] {
                             emulated_controller->StartMotionCalibration();
                         });

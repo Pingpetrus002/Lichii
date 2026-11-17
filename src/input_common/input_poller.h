@@ -214,6 +214,9 @@ private:
      *               - "invert_x": inverts the sign of the horizontal axis
      *               - "invert_y": inverts the sign of the vertical axis
      *               - "invert_z": inverts the sign of the forward axis
+     *               - "motion": the controller's motion sensor to bind with the input
+     *               - "threshold": the gyro rate under which the sensor is considered at rest
+     *               - "gyro_sensitivity": multiplier for the sensor's gyro rates, 0.1 to 5
      *               - "guid": text string for identifying controllers
      *               - "port": port of the connected device
      *               - "pad": slot of the connected controller
